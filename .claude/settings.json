@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell.exe -Command \"Get-ChildItem -Path 'D:\\\\' -Name 'esp*' -ErrorAction SilentlyContinue; Get-ChildItem -Path 'D:\\\\' -Name 'Espressif' -ErrorAction SilentlyContinue; Get-ChildItem -Path 'D:\\\\Espressif' -Directory -ErrorAction SilentlyContinue | Select-Object FullName\")",
+      "Bash(ls /c/Espressif/dist/ 2>/dev/null | head -20)",
+      "Read(//c/Espressif/dist//**)",
+      "Bash(ls /c/Users/ZYAT/.espressif/ 2>/dev/null | head -20)",
+      "Read(//c/Users/ZYAT/.espressif//**)",
+      "Bash(cmd.exe /c \"set IDF_PATH=E:\\\\ESP\\\\v5.5.2\\\\esp-idf && cd /d D:\\\\work\\\\xiaozhi-esp32-main-1 && call E:\\\\ESP\\\\v5.5.2\\\\esp-idf\\\\export.bat && idf.py set-target esp32\")",
+      "Bash(python tools/activate.py --export)",
+      "Bash(cmd.exe /c \"cd /d D:\\\\work\\\\xiaozhi-esp32-main-1 && call E:\\\\ESP\\\\v5.5.2\\\\esp-idf\\\\export.bat && idf.py set-target esp32\")",
+      "Bash(cmd.exe /c \"D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_esp32.bat\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_esp32.bat' 2>&1\")",
+      "Bash(MSYSTEM= cmd.exe /c \"D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_esp32.bat\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\flash_esp32.bat' 2>&1\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_and_flash.bat' 2>&1\")",
+      "Bash(powershell.exe -Command \"Get-WmiObject Win32_SerialPort | Select-Object DeviceID, Description, Status\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\flash_only.bat' 2>&1\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_and_flash_s3.bat' 2>&1\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\flash_s3.bat' 2>&1\")"
+    ]
+  }
+}

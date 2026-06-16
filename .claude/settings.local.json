@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'set IDF_PATH=E:\\\\ESP\\\\v5.5.2\\\\esp-idf && set MSYSTEM= && call E:\\\\ESP\\\\v5.5.2\\\\esp-idf\\\\export.bat && cd /d D:\\\\work\\\\xiaozhi-esp32-main-1 && rmdir /s /q build 2>nul && idf.py set-target esp32s3' 2>&1\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\setup_target.bat' 2>&1\")",
+      "Bash(powershell.exe -Command \"& cmd.exe /c 'D:\\\\work\\\\xiaozhi-esp32-main-1\\\\build_flash_rlcd.bat' 2>&1\")"
+    ]
+  }
+}
