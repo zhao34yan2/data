@@ -44,7 +44,8 @@ void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area
     {
         for(int x = area->x1; x <= area->x2; x++) 
         {
-            uint8_t color = (*buffer < 0x7fff) ? ColorBlack : ColorWhite;
+            // 深色模式通过 XOR 0xFF 翻转黑白像素
+            uint8_t color = ((*buffer < 0x7fff) ? ColorBlack : ColorWhite) ^ (self->dark_mode_ ? 0xFF : 0x00);
             rlcd->RLCD_SetPixel(x, y, color);
             buffer++;
         }
@@ -178,6 +179,76 @@ void CustomLcdDisplay::RefreshMemoDisplayInternal() {
 void CustomLcdDisplay::RefreshMemoDisplay() {
     DisplayLockGuard lock(this);
     RefreshMemoDisplayInternal();
+}
+
+// ===== 闹钟显示（从 NVS 读取下一闹钟时间并显示在指示器上）=====
+
+void CustomLcdDisplay::RefreshAlarmDisplayInternal() {
+    if (!memo_list_label_) return;
+
+    // 从 NVS 读取闹钟列表
+    Settings settings("alarm", false);
+    std::string alarm_json = settings.GetString("items", "");
+
+    if (alarm_json.empty()) {
+        return;  // 没有闹钟，备忘录正常显示
+    }
+
+    cJSON *arr = cJSON_Parse(alarm_json.c_str());
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) cJSON_Delete(arr);
+        return;
+    }
+
+    // 查找第一个 enabled 的闹钟
+    int count = cJSON_GetArraySize(arr);
+    for (int i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *enabled = cJSON_GetObjectItem(item, "enabled");
+        if (enabled && cJSON_IsBool(enabled) && cJSON_IsTrue(enabled)) {
+            cJSON *h = cJSON_GetObjectItem(item, "h");
+            cJSON *m = cJSON_GetObjectItem(item, "m");
+            cJSON *repeat = cJSON_GetObjectItem(item, "repeat");
+            if (h && m) {
+                int hour = h->valueint;
+                int min = m->valueint;
+                const char* rep = (repeat && cJSON_IsString(repeat)) ? repeat->valuestring : "once";
+
+                // 获取当前备忘录文本
+                const char* current_memo = lv_label_get_text(memo_list_label_);
+                std::string alarm_line;
+                char time_str[8];
+                snprintf(time_str, sizeof(time_str), "%02d:%02d", hour, min);
+
+                if (strcmp(rep, "once") == 0)
+                    alarm_line = std::string("\n[闹钟] ") + time_str;
+                else if (strcmp(rep, "daily") == 0)
+                    alarm_line = std::string("\n[闹钟] ") + time_str + " 每天";
+                else if (strcmp(rep, "weekdays") == 0)
+                    alarm_line = std::string("\n[闹钟] ") + time_str + " 工作日";
+                else if (strcmp(rep, "weekends") == 0)
+                    alarm_line = std::string("\n[闹钟] ") + time_str + " 周末";
+                else
+                    alarm_line = std::string("\n[闹钟] ") + time_str + " " + rep;
+
+                // 如果已有闹钟行，先替换；否则追加
+                std::string full_text = current_memo ? current_memo : "";
+                size_t alarm_pos = full_text.find("\n[闹钟]");
+                if (alarm_pos != std::string::npos) {
+                    full_text = full_text.substr(0, alarm_pos);
+                }
+                full_text += alarm_line;
+                lv_label_set_text(memo_list_label_, full_text.c_str());
+            }
+            break;
+        }
+    }
+    cJSON_Delete(arr);
+}
+
+void CustomLcdDisplay::RefreshAlarmDisplay() {
+    DisplayLockGuard lock(this);
+    RefreshAlarmDisplayInternal();
 }
 
 // ===== AI 消息适配（重写小智的方法，只更新左下角卡片）=====
@@ -339,13 +410,18 @@ void CustomLcdDisplay::UpdateStatusBar(bool update_all) {
 // ===== 重写主题切换 =====
 
 void CustomLcdDisplay::SetTheme(Theme* theme) {
-    // RLCD 是 1-bit 单色屏，只有黑白两色，不需要主题切换。
+    // RLCD 是 1-bit 单色屏，不需要基类复杂的 LVGL 主题切换。
     // 基类的 SetTheme 会操作 container_、content_、top_bar_ 等控件，
     // 我们的天气站 UI 没有创建这些，直接跳过避免崩溃。
-    
-    // 但需要保存 theme 指针，SetEmotion 需要用它来加载 emoji 图片
+    //
+    // 改用黑白反转的方式实现深浅色模式：在 Lvgl_flush_cb 中反转像素颜色。
+
+    dark_mode_ = (theme->name() == "dark");
     current_theme_ = theme;
-    ESP_LOGI(TAG, "RLCD 单色屏，跳过主题切换（已保存 theme 指针）");
+    ESP_LOGI(TAG, "主题切换: %s -> dark_mode=%d", theme->name().c_str(), dark_mode_);
+
+    // 标记全屏需要重绘，下次 LVGL 定时刷新时会触发 flush 回调应用反转
+    lv_obj_invalidate(lv_screen_active());
 }
 
 void CustomLcdDisplay::ApplyDisplayMode() {

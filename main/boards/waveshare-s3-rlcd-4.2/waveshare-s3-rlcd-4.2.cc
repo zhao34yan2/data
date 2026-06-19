@@ -646,6 +646,249 @@ private:
                 ESP_LOGI(TAG, "所有备忘已清除");
                 return std::string("所有备忘已清除");
             });
+
+        // ===== 闹钟工具（支持重复模式）=====
+        // NVS key "items" 存储 JSON 数组: [{"h":7,"m":30,"enabled":true,"label":"起床","repeat":"weekdays"}, ...]
+        // repeat 字段: "once"(单次) / "daily"(每天) / "weekdays"(工作日) / "weekends"(周末) / "mon,wed,fri"(自定义)
+
+        // 添加闹钟
+        mcp_server.AddTool("self.alarm.add",
+            "Add an alarm clock. The device will beep and show a notification when the alarm time is reached.\n"
+            "Use when user says: '设置闹钟', '每天早上7点叫我', '工作日8点半闹钟'\n"
+            "Args:\n"
+            "  `hour`: Hour (0-23, required)\n"
+            "  `minute`: Minute (0-59, required)\n"
+            "  `label`: Optional label/name for the alarm (e.g. '起床', '开会')\n"
+            "  `repeat`: Repeat mode. Values:\n"
+            "    - 'once' (default): Fire once then auto-disable\n"
+            "    - 'daily': Every day\n"
+            "    - 'weekdays': Monday to Friday\n"
+            "    - 'weekends': Saturday and Sunday\n"
+            "    - 'mon,wed,fri' or any comma-separated combination of: sun,mon,tue,wed,thu,fri,sat\n"
+            "Important: Convert natural language time to hour/minute integers.\n"
+            "  '7点半' -> hour=7, minute=30. '晚上8点' -> hour=20, minute=0.",
+            PropertyList(std::vector<Property>({
+                Property("hour", kPropertyTypeInteger, 0, 23),
+                Property("minute", kPropertyTypeInteger, 0, 59),
+                Property("label", kPropertyTypeString, std::string("")),
+                Property("repeat", kPropertyTypeString, std::string("once"))
+            })),
+            [this](const PropertyList& properties) -> ReturnValue {
+                int hour = properties["hour"].value<int>();
+                int minute = properties["minute"].value<int>();
+                auto label = properties["label"].value<std::string>();
+                auto repeat = properties["repeat"].value<std::string>();
+
+                // 校验输入
+                if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                    return std::string("时间无效：小时 0-23，分钟 0-59");
+                }
+                // 校验 repeat 值
+                if (repeat != "once" && repeat != "daily" && repeat != "weekdays"
+                    && repeat != "weekends") {
+                    // 检查是否是逗号分隔的星期组合
+                    bool valid = true;
+                    const char* valid_days[] = {"sun","mon","tue","wed","thu","fri","sat"};
+                    std::string rep = repeat;
+                    size_t pos = 0;
+                    while (pos < rep.length()) {
+                        size_t comma = rep.find(',', pos);
+                        std::string day = rep.substr(pos, comma - pos);
+                        bool found = false;
+                        for (int i = 0; i < 7; i++) {
+                            if (day == valid_days[i]) { found = true; break; }
+                        }
+                        if (!found) { valid = false; break; }
+                        if (comma == std::string::npos) break;
+                        pos = comma + 1;
+                    }
+                    if (!valid) {
+                        return std::string("重复模式无效：可选 once/daily/weekdays/weekends 或逗号分隔的星期（如 mon,wed,fri）");
+                    }
+                }
+
+                // 读取现有列表
+                std::string json_str;
+                {
+                    Settings settings("alarm", false);
+                    json_str = settings.GetString("items", "[]");
+                }
+
+                cJSON *arr = cJSON_Parse(json_str.c_str());
+                if (!arr) arr = cJSON_CreateArray();
+
+                // 最多 10 个
+                if (cJSON_GetArraySize(arr) >= 10) {
+                    cJSON_Delete(arr);
+                    return std::string("闹钟已满（最多10个），请先删除一些");
+                }
+
+                cJSON *item = cJSON_CreateObject();
+                cJSON_AddNumberToObject(item, "h", hour);
+                cJSON_AddNumberToObject(item, "m", minute);
+                cJSON_AddBoolToObject(item, "enabled", true);
+                cJSON_AddStringToObject(item, "label", label.c_str());
+                cJSON_AddStringToObject(item, "repeat", repeat.c_str());
+                cJSON_AddItemToArray(arr, item);
+
+                char *new_json = cJSON_PrintUnformatted(arr);
+                {
+                    Settings settings("alarm", true);
+                    settings.SetString("items", new_json);
+                }
+                int count = cJSON_GetArraySize(arr);
+                cJSON_free(new_json);
+                cJSON_Delete(arr);
+
+                if (display_) display_->RefreshAlarmDisplay();
+                ESP_LOGI(TAG, "闹钟已添加: %02d:%02d 标签=%s 重复=%s",
+                         hour, minute, label.c_str(), repeat.c_str());
+                return std::string("已添加闹钟: ") + std::to_string(hour) + ":" +
+                    (minute < 10 ? "0" : "") + std::to_string(minute) +
+                    "（共" + std::to_string(count) + "个）";
+            });
+
+        // 列出所有闹钟
+        mcp_server.AddTool("self.alarm.list",
+            "List all alarm clocks on the device.\n"
+            "Use when user says: '列出闹钟', '查看闹钟', '我的闹钟'",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                Settings settings("alarm", false);
+                std::string alarm_json = settings.GetString("items", "");
+
+                if (alarm_json.empty()) {
+                    return std::string("当前没有设置闹钟");
+                }
+
+                cJSON *arr = cJSON_Parse(alarm_json.c_str());
+                if (!arr || !cJSON_IsArray(arr)) {
+                    if (arr) cJSON_Delete(arr);
+                    return std::string("当前没有设置闹钟");
+                }
+
+                std::string result;
+                int count = cJSON_GetArraySize(arr);
+                if (count == 0) {
+                    cJSON_Delete(arr);
+                    return std::string("当前没有设置闹钟");
+                }
+
+                for (int i = 0; i < count; i++) {
+                    cJSON *item = cJSON_GetArrayItem(arr, i);
+                    cJSON *h = cJSON_GetObjectItem(item, "h");
+                    cJSON *m = cJSON_GetObjectItem(item, "m");
+                    cJSON *enabled = cJSON_GetObjectItem(item, "enabled");
+                    cJSON *label = cJSON_GetObjectItem(item, "label");
+                    cJSON *repeat = cJSON_GetObjectItem(item, "repeat");
+
+                    char buf[128];
+                    int hour = h ? h->valueint : 0;
+                    int min = m ? m->valueint : 0;
+                    const char* lbl = (label && cJSON_IsString(label)) ? label->valuestring : "";
+                    const char* rep = (repeat && cJSON_IsString(repeat)) ? repeat->valuestring : "once";
+                    bool ena = !enabled || cJSON_IsTrue(enabled);
+
+                    const char* repeat_status = ena ? rep : "(已禁用)";
+                    snprintf(buf, sizeof(buf), "%d. %02d:%02d %s%s%s\n",
+                             i + 1, hour, min,
+                             strlen(lbl) > 0 ? lbl : "",
+                             strlen(lbl) > 0 ? " " : "",
+                             repeat_status);
+                    result += buf;
+                }
+
+                cJSON_Delete(arr);
+                return result;
+            });
+
+        // 按序号删除闹钟
+        mcp_server.AddTool("self.alarm.delete",
+            "Delete an alarm clock by its number.\n"
+            "Use when user says: '删除闹钟', '取消闹钟'\n"
+            "First call self.alarm.list to find the number.\n"
+            "Args:\n"
+            "  `index`: 1-based index of the alarm to delete",
+            PropertyList(std::vector<Property>({
+                Property("index", kPropertyTypeInteger, 1, 10)
+            })),
+            [this](const PropertyList& properties) -> ReturnValue {
+                int index = properties["index"].value<int>();
+
+                Settings settings("alarm", false);
+                std::string alarm_json = settings.GetString("items", "[]");
+
+                cJSON *arr = cJSON_Parse(alarm_json.c_str());
+                if (!arr || !cJSON_IsArray(arr)) {
+                    if (arr) cJSON_Delete(arr);
+                    return std::string("没有闹钟可删除");
+                }
+
+                int count = cJSON_GetArraySize(arr);
+                if (index < 1 || index > count) {
+                    cJSON_Delete(arr);
+                    return std::string("序号无效，当前共有 ") + std::to_string(count) + " 个闹钟";
+                }
+
+                cJSON_DeleteItemFromArray(arr, index - 1);
+
+                char *new_json = cJSON_PrintUnformatted(arr);
+                {
+                    Settings settings_wr("alarm", true);
+                    settings_wr.SetString("items", new_json);
+                }
+                cJSON_free(new_json);
+                cJSON_Delete(arr);
+
+                if (display_) display_->RefreshAlarmDisplay();
+                ESP_LOGI(TAG, "闹钟 #%d 已删除", index);
+                return std::string("闹钟 #") + std::to_string(index) + " 已删除";
+            });
+
+        // 清空所有闹钟
+        mcp_server.AddTool("self.alarm.clear",
+            "Clear ALL alarm clocks.\n"
+            "Use when user says: '清空所有闹钟', '全部闹钟取消'",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                {
+                    Settings settings("alarm", true);
+                    settings.EraseKey("items");
+                }
+                if (display_) display_->RefreshAlarmDisplay();
+                ESP_LOGI(TAG, "所有闹钟已清空");
+                return std::string("所有闹钟已清空");
+            });
+
+        // ===== TTS 播报配置 =====
+        {
+            Settings tts_settings("tts", false);
+            std::string existing = tts_settings.GetString("url", "");
+            if (existing.empty()) {
+                Settings tts_write("tts", true);
+                tts_write.SetString("url",
+                    "https://fanyi.baidu.com/gettts?lan=zh&text={TEXT}&spd=3&source=web");
+                ESP_LOGI(TAG, "已设置默认 TTS URL");
+            }
+        }
+
+        mcp_server.AddTool("self.tts.set_url",
+            "Set the TTS URL template for voice broadcast.\n"
+            "The URL must contain {TEXT} as placeholder.\n"
+            "Leave empty to disable.",
+            PropertyList(std::vector<Property>({
+                Property("url", kPropertyTypeString)
+            })),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto url = properties["url"].value<std::string>();
+                {
+                    Settings tts_write("tts", true);
+                    tts_write.SetString("url", url);
+                }
+                return url.empty()
+                    ? std::string("TTS 已关闭")
+                    : std::string("TTS URL 已设置");
+            });
     }
 
     void InitializeLcdDisplay() {

@@ -103,7 +103,13 @@ private:
     
     // 系统信息滚动标志（为 true 时暂停 DataUpdateTask 更新，避免锁竞争）
     std::atomic<bool> showing_system_info_{false};
-    
+
+    // 深色模式标志（1-bit 单色屏通过反转像素颜色实现）
+    bool dark_mode_ = false;
+
+    // 闹钟指示器（显示下一闹钟时间，放在温湿度右侧）
+    lv_obj_t *alarm_indicator_ = nullptr;
+
     // 省电模式：5 分钟无活动后降低刷新频率（1秒 → 5秒）
     std::atomic<bool> power_saving_{false};     // 是否处于省电模式
     uint32_t last_activity_ms_ = 0;             // 上次用户活动的时间（tick 毫秒）
@@ -173,6 +179,10 @@ public:
     // 刷新右下角备忘录列表显示（从 NVS 读取后格式化显示）
     void RefreshMemoDisplay();           // 自动获取锁（外部调用用这个）
     void RefreshMemoDisplayInternal();   // 不获取锁（已持锁时用这个，避免死锁）
+
+    // 刷新闹钟指示器（从 NVS 读取下一闹钟并显示）
+    void RefreshAlarmDisplay();          // 自动获取锁
+    void RefreshAlarmDisplayInternal();  // 不获取锁
     void CycleDisplayMode();
     bool IsMusicMode() const { return display_mode_ == MODE_MUSIC; }
     bool IsPomodoroMode() const { return display_mode_ == MODE_POMODORO; }

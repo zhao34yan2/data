@@ -225,6 +225,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 snprintf(date_buf, sizeof(date_buf), "%d/%d", timeinfo.tm_mon + 1, timeinfo.tm_mday);
                 if (self->date_num_label_) lv_label_set_text(self->date_num_label_, date_buf);
 
+                // 每分钟刷新闹钟指示器
+                self->RefreshAlarmDisplayInternal();
+
                 self->last_min_ = timeinfo.tm_min;
                 ESP_LOGI(TAG, "时间已更新: %s, %s, %d日", time_buf, weeks_cn[timeinfo.tm_wday], timeinfo.tm_mday);
             }
@@ -271,11 +274,38 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                                     snprintf(alert_buf, sizeof(alert_buf), "备忘提醒: %s %s", mt->valuestring, memo_text);
                                     ESP_LOGI(TAG, "🔔 触发备忘闹钟: %s", alert_buf);
 
-                                    // 播放提示音 3 次 + 屏幕显示提醒
+                                    // 播放提示音 1 次 + 屏幕显示提醒
                                     app.Alert("提醒", alert_buf, "happy", Lang::Sounds::OGG_POPUP);
-                                    for (int repeat = 0; repeat < 2; repeat++) {
-                                        vTaskDelay(pdMS_TO_TICKS(1500));
-                                        app.PlaySound(Lang::Sounds::OGG_POPUP);
+                                    vTaskDelay(pdMS_TO_TICKS(500));
+
+                                    // TTS 语音播报（配置了 URL 则播报文字内容）
+                                    {
+                                        Settings tts_rd("tts", false);
+                                        std::string tts_url = tts_rd.GetString("url", "");
+                                        if (!tts_url.empty()) {
+                                            std::string enc;
+                                            for (const char* p = memo_text; *p; p++) {
+                                                if ((*p >= '0' && *p <= '9') ||
+                                                    (*p >= 'A' && *p <= 'Z') ||
+                                                    (*p >= 'a' && *p <= 'z') ||
+                                                    *p == '-' || *p == '_' || *p == '.')
+                                                    enc += *p;
+                                                else if (*p == ' ')
+                                                    enc += "%20";
+                                                else
+                                                    enc += *p;
+                                            }
+                                            size_t pos = tts_url.find("{TEXT}");
+                                            if (pos != std::string::npos)
+                                                tts_url.replace(pos, 6, enc);
+                                            ESP_LOGI(TAG, "🔊 TTS: %s", tts_url.c_str());
+                                            // 重复播报 3 次
+                                            app.PlayMusicFromUrl(tts_url, "备忘", "", "");
+                                            for (int tts_repeat = 0; tts_repeat < 2; tts_repeat++) {
+                                                vTaskDelay(pdMS_TO_TICKS(3000));
+                                                app.PlayMusicFromUrl(tts_url, "备忘", "", "");
+                                            }
+                                        }
                                     }
 
                                     // 触发后从列表中删除这条
@@ -297,6 +327,120 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         }
                         cJSON_Delete(memo_arr);
                     }
+                }
+            }
+        }
+
+        // ===== 闹钟检查（支持重复模式：once/daily/weekdays/weekends/自定义）=====
+        if (minute_changed && time_synced) {
+            Settings alarm_rd("alarm", false);
+            std::string alarm_json = alarm_rd.GetString("items", "");
+            if (!alarm_json.empty()) {
+                cJSON *alarm_arr = cJSON_Parse(alarm_json.c_str());
+                if (alarm_arr && cJSON_IsArray(alarm_arr)) {
+                    bool alarm_changed = false;
+                    int total = cJSON_GetArraySize(alarm_arr);
+
+                    for (int ai = 0; ai < total; ai++) {
+                        cJSON *item = cJSON_GetArrayItem(alarm_arr, ai);
+                        cJSON *h_obj = cJSON_GetObjectItem(item, "h");
+                        cJSON *m_obj = cJSON_GetObjectItem(item, "m");
+                        cJSON *enabled_obj = cJSON_GetObjectItem(item, "enabled");
+                        cJSON *label_obj = cJSON_GetObjectItem(item, "label");
+                        cJSON *repeat_obj = cJSON_GetObjectItem(item, "repeat");
+
+                        if (!h_obj || !m_obj) continue;
+                        if (!enabled_obj || !cJSON_IsTrue(enabled_obj)) continue;
+
+                        int alarm_h = h_obj->valueint;
+                        int alarm_m = m_obj->valueint;
+
+                        // 时间不匹配则跳过
+                        if (alarm_h != timeinfo.tm_hour || alarm_m != timeinfo.tm_min)
+                            continue;
+
+                        const char* repeat = (repeat_obj && cJSON_IsString(repeat_obj))
+                            ? repeat_obj->valuestring : "once";
+                        const char* label = (label_obj && cJSON_IsString(label_obj))
+                            ? label_obj->valuestring : "闹钟";
+
+                        // 检查重复模式
+                        bool should_fire = false;
+                        if (strcmp(repeat, "once") == 0) {
+                            should_fire = true;
+                        } else if (strcmp(repeat, "daily") == 0) {
+                            should_fire = true;
+                        } else if (strcmp(repeat, "weekdays") == 0) {
+                            should_fire = (timeinfo.tm_wday >= 1 && timeinfo.tm_wday <= 5);
+                        } else if (strcmp(repeat, "weekends") == 0) {
+                            should_fire = (timeinfo.tm_wday == 0 || timeinfo.tm_wday == 6);
+                        } else {
+                            // 自定义："mon,wed,fri" 等
+                            const char* wday_names[] = {"sun","mon","tue","wed","thu","fri","sat"};
+                            int wday = timeinfo.tm_wday;
+                            if (wday >= 0 && wday <= 6) {
+                                should_fire = (strstr(repeat, wday_names[wday]) != NULL);
+                            }
+                        }
+
+                        if (!should_fire) continue;
+
+                        char alert_msg[128];
+                        snprintf(alert_msg, sizeof(alert_msg), "⏰ %s (%02d:%02d)", label, alarm_h, alarm_m);
+                        ESP_LOGI(TAG, "🔔 闹钟触发: %s", alert_msg);
+
+                        // 屏幕显示提醒 + 播放 1 次提示音
+                        app.Alert("闹钟", alert_msg, "neutral", Lang::Sounds::OGG_POPUP);
+                        vTaskDelay(pdMS_TO_TICKS(500));
+
+                        // TTS 语音播报闹钟内容
+                        {
+                            Settings tts_rd("tts", false);
+                            std::string tts_url = tts_rd.GetString("url", "");
+                            if (!tts_url.empty()) {
+                                std::string enc;
+                                for (const char* p = label; *p; p++) {
+                                    if ((*p >= '0' && *p <= '9') ||
+                                        (*p >= 'A' && *p <= 'Z') ||
+                                        (*p >= 'a' && *p <= 'z') ||
+                                        *p == '-' || *p == '_' || *p == '.')
+                                        enc += *p;
+                                    else if (*p == ' ')
+                                        enc += "%20";
+                                    else
+                                        enc += *p;
+                                }
+                                size_t pos = tts_url.find("{TEXT}");
+                                if (pos != std::string::npos)
+                                    tts_url.replace(pos, 6, enc);
+                                ESP_LOGI(TAG, "🔊 TTS: %s", tts_url.c_str());
+                                // 重复播报 3 次
+                                app.PlayMusicFromUrl(tts_url, "闹钟", "", "");
+                                for (int tts_r = 0; tts_r < 2; tts_r++) {
+                                    vTaskDelay(pdMS_TO_TICKS(3000));
+                                    app.PlayMusicFromUrl(tts_url, "闹钟", "", "");
+                                }
+                            }
+                        }
+
+                        // 单次闹钟响后自动禁用
+                        if (strcmp(repeat, "once") == 0) {
+                            cJSON_SetBoolValue(enabled_obj, false);
+                            alarm_changed = true;
+                        }
+                    }
+
+                    // 写回 NVS
+                    if (alarm_changed) {
+                        char *new_json = cJSON_PrintUnformatted(alarm_arr);
+                        {
+                            Settings alarm_wr("alarm", true);
+                            alarm_wr.SetString("items", new_json);
+                        }
+                        cJSON_free(new_json);
+                        self->RefreshAlarmDisplay();
+                    }
+                    cJSON_Delete(alarm_arr);
                 }
             }
         }
