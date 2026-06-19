@@ -251,6 +251,47 @@ void CustomLcdDisplay::RefreshAlarmDisplay() {
     RefreshAlarmDisplayInternal();
 }
 
+// ===== 手机通知显示（来自 ANCS BLE 推送）=====
+
+void CustomLcdDisplay::ShowPhoneNotification(const char* app_name, const char* title, const char* message, bool is_call) {
+    DisplayLockGuard lock(this);
+
+    // 在 AI 对话标签上显示通知内容
+    if (chat_status_label_) {
+        char notify_buf[256];
+        if (is_call) {
+            snprintf(notify_buf, sizeof(notify_buf), "📱 来电\n%s", message ? message : title);
+        } else {
+            // 格式：应用名 + 标题 + 消息
+            if (title && strlen(title) > 0 && message && strlen(message) > 0) {
+                snprintf(notify_buf, sizeof(notify_buf), "%s\n%s\n%s", app_name, title, message);
+            } else if (title && strlen(title) > 0) {
+                snprintf(notify_buf, sizeof(notify_buf), "%s\n%s", app_name, title);
+            } else {
+                snprintf(notify_buf, sizeof(notify_buf), "%s\n%s", app_name, message ? message : "");
+            }
+        }
+
+        // 显示通知（覆盖 AI 对话区域）
+        lv_label_set_text(chat_status_label_, notify_buf);
+        lv_label_set_long_mode(chat_status_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+
+        phone_notification_active_ = true;
+        phone_notification_start_ms_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+        ESP_LOGI(TAG, "📱 通知: %s", notify_buf);
+    }
+}
+
+void CustomLcdDisplay::DismissPhoneNotification() {
+    DisplayLockGuard lock(this);
+    phone_notification_active_ = false;
+    // 恢复 AI 对话标签为空
+    if (chat_status_label_) {
+        lv_label_set_text(chat_status_label_, "");
+    }
+}
+
 // ===== AI 消息适配（重写小智的方法，只更新左下角卡片）=====
 
 void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {

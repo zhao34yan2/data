@@ -183,6 +183,11 @@ public:
     // 刷新闹钟指示器（从 NVS 读取下一闹钟并显示）
     void RefreshAlarmDisplay();          // 自动获取锁
     void RefreshAlarmDisplayInternal();  // 不获取锁
+
+    // 显示手机通知（来自 ANCS BLE 推送）
+    void ShowPhoneNotification(const char* app_name, const char* title, const char* message, bool is_call = false);
+    void DismissPhoneNotification();
+    bool HasPhoneNotification() const { return phone_notification_active_; }
     void CycleDisplayMode();
     bool IsMusicMode() const { return display_mode_ == MODE_MUSIC; }
     bool IsPomodoroMode() const { return display_mode_ == MODE_POMODORO; }
@@ -191,6 +196,11 @@ public:
     // 番茄钟 UI 更新方法
     void UpdatePomodoroDisplay(const char* state_text, const char* countdown_text,
                                int progress_permille, const char* info_text);
+
+    // 手机通知显示相关
+    bool phone_notification_active_ = false;
+    uint32_t phone_notification_start_ms_ = 0;
+    static const uint32_t PHONE_NOTIFICATION_DURATION_MS = 8000;  // 显示 8 秒后消失
 };
 
 #endif

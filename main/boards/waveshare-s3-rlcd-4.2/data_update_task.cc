@@ -695,6 +695,14 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             }
         }
 
+        // ===== 手机通知自动消失 =====
+        if (self->phone_notification_active_) {
+            uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            if (now - self->phone_notification_start_ms_ >= self->PHONE_NOTIFICATION_DURATION_MS) {
+                self->DismissPhoneNotification();
+            }
+        }
+
         // ===== 省电模式检测 =====
         // 5 分钟无活动（无按钮、无 AI 对话）时进入省电模式，降低刷新频率
         // 注意：必须重新取当前时间，因为 NotifyUserActivity() 可能在本轮循环中

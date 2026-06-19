@@ -19,6 +19,7 @@
 #include "managers/sensor_manager.h"
 #include "managers/sdcard_manager.h"
 #include "managers/pomodoro_manager.h"
+// #include "managers/ancs_manager.h"    // ANCS BLE 通知 - 待完成
 
 // 声明小智字体（用于系统信息显示时临时切换字体大小）
 LV_FONT_DECLARE(font_puhui_14_1);
@@ -980,6 +981,9 @@ public:
         InitializeButtons();
         InitializeTools();
         InitializeLcdDisplay();
+
+        // TODO: ANCS BLE 手机通知管理器（NimBLE GATT 客户端，待完善 NimBLE API 适配）
+        // Application::GetInstance().Schedule([this]() { ... ancs.Start(); ... });
     }
 
     virtual AudioCodec* GetAudioCodec() override {
